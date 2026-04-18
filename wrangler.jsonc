@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "bmsresearchliteratureweekly",
+  "main": "comments-worker.js",           // 入口文件
   "compatibility_date": "2026-04-18",
   "observability": {
     "enabled": true
