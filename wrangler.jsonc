@@ -1,15 +1,11 @@
+
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bmsresearchliteratureweekly",
-  "main": "comments-worker.js",           // 入口文件
-  "compatibility_date": "2026-04-18",
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "bms-comments-worker",
+  "main": "comments-worker.js",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
-  },
-  "assets": {
-    "directory": "."
-  },
-  "compatibility_flags": [
-    "nodejs_compat"
-  ]
+  }
 }
