@@ -1,0 +1,8 @@
+{
+  "name": "bms-comments-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@octokit/app": "^14.1.1"
+  }
+}
