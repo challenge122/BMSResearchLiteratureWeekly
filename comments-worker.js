@@ -1,9 +1,7 @@
-// worker.js
-import { App } from '@octokit/app';
-
+// comments-worker.js (纯 JS 版本，无需 npm 依赖)
 export default {
   async fetch(request, env) {
-    // 处理 CORS 预检请求
+    // CORS 预检
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -16,18 +14,15 @@ export default {
 
     const url = new URL(request.url);
 
-    // 获取评论列表 (GET /comments?slug=xxx)
+    // GET 评论
     if (request.method === 'GET' && url.pathname === '/comments') {
       const slug = url.searchParams.get('slug');
-      if (!slug) {
-        return new Response('Missing slug parameter', { status: 400 });
-      }
+      if (!slug) return new Response('Missing slug', { status: 400 });
 
       try {
         const octokit = await getInstallationOctokit(env);
         const filePath = `comments/${slug}.json`;
 
-        // 尝试获取已有文件
         let response;
         try {
           response = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
@@ -37,56 +32,38 @@ export default {
             ref: env.GITHUB_BRANCH || 'main',
           });
         } catch (error) {
-          // 文件不存在时返回空数组
           if (error.status === 404) {
             return new Response(JSON.stringify([]), {
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-              },
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
             });
           }
           throw error;
         }
 
-        // 解码 base64 内容
         const content = atob(response.data.content);
         const comments = JSON.parse(content);
-
         return new Response(JSON.stringify(comments), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
         });
       } catch (error) {
-        console.error('GET error:', error);
         return new Response(JSON.stringify({ error: 'Failed to fetch comments' }), {
           status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
         });
       }
     }
 
-    // 提交新评论 (POST /comments)
+    // POST 评论
     if (request.method === 'POST' && url.pathname === '/comments') {
       try {
         const body = await request.json();
         const { slug, author, content, email } = body;
 
-        // 基础验证
         if (!slug || !author || !content) {
-          return new Response('Missing required fields: slug, author, content', {
-            status: 400,
-          });
+          return new Response('Missing required fields', { status: 400 });
         }
 
-        // 简单的内容清洗（防 XSS）
         const sanitizedContent = content.replace(/<[^>]*>/g, '');
-
         const newComment = {
           id: crypto.randomUUID(),
           author: author.trim(),
@@ -98,7 +75,6 @@ export default {
         const octokit = await getInstallationOctokit(env);
         const filePath = `comments/${slug}.json`;
 
-        // 获取现有文件内容及 sha（如果存在）
         let existingSha = null;
         let existingComments = [];
 
@@ -110,30 +86,21 @@ export default {
             ref: env.GITHUB_BRANCH || 'main',
           });
           existingSha = getResponse.data.sha;
-          const content = atob(getResponse.data.content);
-          existingComments = JSON.parse(content);
+          existingComments = JSON.parse(atob(getResponse.data.content));
         } catch (error) {
-          // 文件不存在，忽略错误，后续会新建
-          if (error.status !== 404) {
-            throw error;
-          }
+          if (error.status !== 404) throw error;
         }
 
-        // 合并评论
         const allComments = [...existingComments, newComment];
         const fileContent = JSON.stringify(allComments, null, 2);
-        // 正确处理中文的 Base64 编码
         const base64Content = btoa(unescape(encodeURIComponent(fileContent)));
 
-        // 提交到 GitHub
         const putBody = {
           message: `Add comment from ${author} on ${slug}`,
           content: base64Content,
           branch: env.GITHUB_BRANCH || 'main',
         };
-        if (existingSha) {
-          putBody.sha = existingSha;
-        }
+        if (existingSha) putBody.sha = existingSha;
 
         await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', {
           owner: env.GITHUB_OWNER,
@@ -144,38 +111,94 @@ export default {
 
         return new Response(JSON.stringify({ success: true, comment: newComment }), {
           status: 201,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
         });
       } catch (error) {
-        console.error('POST error:', error);
-        return new Response(
-          JSON.stringify({ error: 'Failed to submit comment', details: error.message }),
-          {
-            status: 500,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-            },
-          }
-        );
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
       }
     }
 
-    // 其他请求返回 404
     return new Response('Not Found', { status: 404 });
   },
 };
 
-/**
- * 使用 GitHub App 凭证获取已认证的 Octokit 实例
- */
+// ---------- 纯 JS 实现 GitHub App 认证（无需 @octokit/app）----------
 async function getInstallationOctokit(env) {
-  const app = new App({
-    appId: env.GITHUB_APP_ID,
-    privateKey: env.GITHUB_APP_PRIVATE_KEY,
+  const appId = env.GITHUB_APP_ID;
+  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
+  const installationId = env.GITHUB_APP_INSTALLATION_ID;
+
+  // 生成 JWT
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iat: now - 60, exp: now + 600, iss: appId };
+  const header = { alg: 'RS256', typ: 'JWT' };
+
+  const pemContents = privateKey
+    .replace('-----BEGIN RSA PRIVATE KEY-----', '')
+    .replace('-----END RSA PRIVATE KEY-----', '')
+    .replace(/\s/g, '');
+  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    binaryDer,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const encode = (obj) => btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const encodedHeader = encode(header);
+  const encodedPayload = encode(payload);
+  const signatureInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(signatureInput));
+  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const jwt = `${signatureInput}.${encodedSignature}`;
+
+  // 换取安装令牌
+  const tokenRes = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${jwt}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'Cloudflare-Worker',
+    },
   });
-  return await app.getInstallationOctokit(env.GITHUB_APP_INSTALLATION_ID);
+
+  if (!tokenRes.ok) {
+    throw new Error(`Failed to get installation token: ${tokenRes.status}`);
+  }
+
+  const { token } = await tokenRes.json();
+
+  // 返回简易 Octokit 对象
+  return {
+    request: async (method, url, options = {}) => {
+      const fullUrl = url.startsWith('https://') ? url : `https://api.github.com${url}`;
+      const res = await fetch(fullUrl, {
+        method,
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Cloudflare-Worker',
+          ...options.headers,
+        },
+        body: options.body,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        const error = new Error(`GitHub API error: ${res.status} ${errText}`);
+        error.status = res.status;
+        throw error;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      return { data };
+    },
+  };
 }
