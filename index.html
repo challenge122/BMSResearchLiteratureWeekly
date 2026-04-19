@@ -919,7 +919,7 @@ function getFilteredArticles() {
     return filtered;
 }
 
-  function renderCards() {
+function renderCards() {
       const filtered = getFilteredArticles();
       const totalFiltered = filtered.length;
       const totalPages = Math.ceil(totalFiltered / cardsPerPage) || 1;
@@ -934,6 +934,11 @@ function getFilteredArticles() {
       } else {
         let cardsHtml = '';
         pageArticles.forEach(art => {
+          const slug = getSlugFromUrl(art.链接);
+          // 优先使用已抓取的全局数据，避免重复请求网络
+          const stats = window.statsMap && window.statsMap[slug] ? window.statsMap[slug] : { likes: 0, comments: 0 };
+          const isLiked = localStorage.getItem('liked_' + slug) === 'true';
+
           cardsHtml += `
             <div class="card" data-article-link="${escapeHtml(art.链接)}">
               <div class="card-title">${escapeHtml(art.标题)}</div>
@@ -949,11 +954,11 @@ function getFilteredArticles() {
               </div>
               
               <div class="interaction-row" style="display: flex; align-items: center; gap: 15px; margin-top: 15px; border-top: 1px solid rgba(59, 130, 246, 0.1); padding-top: 12px;">
-                <div class="like-btn" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: #64748b; padding: 6px 12px; border-radius: 40px; transition: all 0.2s; user-select: none;">
-                  <i class="far fa-heart"></i> <span class="like-count">0</span>
+                <div class="like-btn ${isLiked ? 'active' : ''}" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: ${isLiked ? '#ef4444' : '#64748b'}; padding: 6px 12px; border-radius: 40px; transition: all 0.2s; user-select: none;">
+                  <i class="${isLiked ? 'fas' : 'far'} fa-heart"></i> <span class="like-count">${stats.likes}</span>
                 </div>
                 <div class="comment-toggle" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: #1e4b7a; font-size: 0.9rem; user-select: none; padding: 6px 4px; border-radius: 40px;">
-                  <i class="far fa-comment"></i> 评论 (0) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem; transition: transform 0.2s;"></i>
+                  <i class="far fa-comment"></i> 评论 (${stats.comments}) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem; transition: transform 0.2s;"></i>
                 </div>
               </div>
 
@@ -983,75 +988,54 @@ function getFilteredArticles() {
         const textInput = panel.querySelector('.comment-text');
         const submitBtn = panel.querySelector('.comment-submit');
 
-        // 1. 初始化：加载点赞数
-        (async () => {
-          try {
-            const res = await fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`);
-            const data = await res.json();
-            likeCountSpan.innerText = data.likes || 0;
-            if (localStorage.getItem('liked_' + slug)) {
-              likeBtn.style.color = '#ef4444';
-              likeBtn.querySelector('i').className = 'fas fa-heart';
-            }
-          } catch (e) { console.error("Load likes error:", e); }
-        })();
-
-        // 2. 初始化：加载评论列表
-        renderCommentPanel(art, panel);
-
-        // 3. 点赞/取消点赞切换点击事件
+        // 点赞/取消点赞切换点击事件
         likeBtn.addEventListener('click', async () => {
-          // 检查本地存储，判断当前状态是“已点赞”还是“未点赞”
           const isLiked = localStorage.getItem('liked_' + slug) === 'true';
-          const action = isLiked ? 'unlike' : 'like'; // 如果已点赞，动作就是取消；反之亦然
+          const action = isLiked ? 'unlike' : 'like';
 
-          // 1. 立即更新 UI 样式（增强用户体验，不等待接口返回）
+          // 立即更新 UI，无需等待网络
           if (action === 'like') {
             likeBtn.style.color = '#ef4444';
             likeBtn.querySelector('i').className = 'fas fa-heart';
+            likeCountSpan.innerText = parseInt(likeCountSpan.innerText) + 1;
+            localStorage.setItem('liked_' + slug, 'true');
           } else {
-            likeBtn.style.color = '#64748b'; // 恢复灰色
-            likeBtn.querySelector('i').className = 'far fa-heart'; // 恢复空心
+            likeBtn.style.color = '#64748b';
+            likeBtn.querySelector('i').className = 'far fa-heart';
+            likeCountSpan.innerText = Math.max(0, parseInt(likeCountSpan.innerText) - 1);
+            localStorage.removeItem('liked_' + slug);
           }
-          
+
           try {
-            // 2. 发送请求给 Worker
             const res = await fetch(`${WORKER_URL}likes`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                slug: slug, 
-                action: action  // 这里必须传 action，Worker 才能判断是加 1 还是减 1
-              })
+              body: JSON.stringify({ slug: slug, action: action })
             });
-            
             if (!res.ok) throw new Error('网络请求失败');
-            
             const data = await res.json();
-            
-            // 3. 更新数字，并同步本地存储状态
             likeCountSpan.innerText = data.likes;
-            if (action === 'like') {
-              localStorage.setItem('liked_' + slug, 'true');
-            } else {
-              localStorage.removeItem('liked_' + slug);
-            }
-          } catch (e) { 
-            console.error("Interaction error:", e);
-            // 如果失败了，建议把样式回滚
-            alert("操作失败，请重试");
+            if(window.statsMap && window.statsMap[slug]) window.statsMap[slug].likes = data.likes;
+          } catch (e) {
+            console.error("点赞请求异常:", e);
           }
         });
 
-        // 4. 评论面板折叠/展开
+        // 核心优化：评论区【只有被点击展开时】才去请求网络加载评论！极大减轻了手机端负担！
         toggle.addEventListener('click', (e) => {
           e.stopPropagation();
-          panel.classList.toggle('show');
-          const icon = toggle.querySelector('.fa-chevron-down');
-          if (icon) icon.style.transform = panel.classList.contains('show') ? 'rotate(180deg)' : 'rotate(0deg)';
+          const isShowing = panel.classList.contains('show');
+          if (!isShowing) {
+             panel.classList.add('show');
+             toggle.querySelector('.fa-chevron-down').style.transform = 'rotate(180deg)';
+             renderCommentPanel(art, panel); 
+          } else {
+             panel.classList.remove('show');
+             toggle.querySelector('.fa-chevron-down').style.transform = 'rotate(0deg)';
+          }
         });
 
-        // 5. 提交评论逻辑
+        // 提交评论逻辑
         submitBtn.addEventListener('click', async () => {
           const nickname = nicknameInput.value.trim();
           const content = textInput.value.trim();
@@ -1065,6 +1049,11 @@ function getFilteredArticles() {
             await renderCommentPanel(art, panel);
             nicknameInput.value = '';
             textInput.value = '';
+            
+            // 更新 UI 上的评论数
+            if(window.statsMap && window.statsMap[slug]) window.statsMap[slug].comments += 1;
+            const currentComments = parseInt(toggle.innerText.match(/\d+/)[0] || 0) + 1;
+            toggle.innerHTML = `<i class="far fa-comment"></i> 评论 (${currentComments}) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem; transform: rotate(180deg);"></i>`;
           } catch (error) {
             alert('提交失败：' + error.message);
           } finally {
@@ -1150,33 +1139,33 @@ if(sortSelector) {
 }
 
 // 静默同步点赞和评论数据
+// 稳定版：静默分批同步点赞和评论数据
 async function syncStats() {
-    // 手机端关键修复：添加 headers 并确保所有请求完成后再渲染
-    const promises = articles.map(async (art) => {
-        const slug = getSlugFromUrl(art.链接);
-        try {
-            // 增加超时控制和显式 Header
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 5000); // 5秒超时
-
-            const [lRes, cRes] = await Promise.all([
-                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`, { signal: controller.signal }).then(r => r.json()),
-                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`, { signal: controller.signal }).then(r => r.json())
-            ]);
-            clearTimeout(id);
-
-            window.statsMap[slug] = { 
-                likes: lRes.likes || 0, 
-                comments: Array.isArray(cRes) ? cRes.length : 0 
-            };
-        } catch (e) {
-            console.error("加载数据失败:", e);
-            window.statsMap[slug] = { likes: 0, comments: 0 };
-        }
-    });
-
-    await Promise.all(promises);
-    // 核心修复：数据同步完后，必须强制触发一次渲染，否则手机端会显示空白
+    // 核心修复：每次只发 4 个请求（分批加载）。完美避开手机浏览器最高 6 个并发连接的限制！
+    for (let i = 0; i < articles.length; i += 4) {
+        const batch = articles.slice(i, i + 4);
+        const promises = batch.map(async (art) => {
+            const slug = getSlugFromUrl(art.链接);
+            try {
+                // 移除了 5 秒超时，让手机网络有充足时间排队处理
+                const [lRes, cRes] = await Promise.all([
+                    fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
+                    fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
+                ]);
+                window.statsMap[slug] = { 
+                    likes: lRes.likes || 0, 
+                    comments: Array.isArray(cRes) ? cRes.length : 0 
+                };
+            } catch (e) {
+                window.statsMap[slug] = { likes: 0, comments: 0 };
+            }
+        });
+        
+        // 等待这 4 个文章查完，再去查下 4 个
+        await Promise.all(promises); 
+    }
+    
+    // 所有数据稳定加载完毕后，刷新一次页面，把数字显示出来
     renderCards(); 
 }
 syncStats();
