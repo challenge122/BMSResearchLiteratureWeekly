@@ -723,7 +723,7 @@
 async function loadCommentsFromWorker(slug) {
       try {
         // We use WORKER_URL + 'comments' because your WORKER_URL already has a / at the end
-        const res = await fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`);
+        const res = await fetch(WORKER_URL + '/comments?slug=' + encodeURIComponent(slug));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const comments = await res.json();
         return Array.isArray(comments) ? comments : [];
