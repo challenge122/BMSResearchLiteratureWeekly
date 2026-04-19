@@ -595,6 +595,47 @@
     i {
       margin-right: 2px;
     }
+
+/* 点赞按钮样式 */
+.interaction-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 15px;
+  border-top: 1px solid rgba(59, 130, 246, 0.1);
+  padding-top: 12px;
+}
+.like-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #64748b;
+  padding: 6px 12px;
+  border-radius: 40px;
+  transition: all 0.2s;
+  user-select: none;
+  border: 1px solid transparent;
+}
+.like-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+.like-btn.active {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+.like-btn.active i {
+  animation: heartBeat 0.3s ease-in-out;
+}
+@keyframes heartBeat {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+    
   </style>
 </head>
 <body>
@@ -806,7 +847,7 @@ async function loadCommentsFromWorker(slug) {
       });
     }
 
-    function renderCards() {
+  function renderCards() {
       const filtered = getFilteredArticles();
       const totalFiltered = filtered.length;
       const totalPages = Math.ceil(totalFiltered / cardsPerPage) || 1;
@@ -834,8 +875,17 @@ async function loadCommentsFromWorker(slug) {
               <div class="link-row">
                 <a class="card-link" href="${escapeHtml(art.链接)}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> 阅读原文</a>
               </div>
-              <div class="comment-section">
-                <div class="comment-toggle" data-link="${escapeHtml(art.链接)}"><i class="far fa-comment"></i> 评论 (0) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem;"></i></div>
+              
+              <div class="interaction-row" style="display: flex; align-items: center; gap: 15px; margin-top: 15px; border-top: 1px solid rgba(59, 130, 246, 0.1); padding-top: 12px;">
+                <div class="like-btn" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: #64748b; padding: 6px 12px; border-radius: 40px; transition: all 0.2s; user-select: none;">
+                  <i class="far fa-heart"></i> <span class="like-count">0</span>
+                </div>
+                <div class="comment-toggle" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: #1e4b7a; font-size: 0.9rem; user-select: none; padding: 6px 4px; border-radius: 40px;">
+                  <i class="far fa-comment"></i> 评论 (0) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem; transition: transform 0.2s;"></i>
+                </div>
+              </div>
+
+              <div class="comment-section" style="margin-top: 5px;">
                 <div class="comment-panel">
                   <div class="comment-input-area"><div class="comment-input-row"><input type="text" class="comment-nickname" placeholder="昵称" maxlength="20"><input type="text" class="comment-text" placeholder="写评论..." maxlength="200"><button class="comment-submit"><i class="fas fa-paper-plane"></i> 发布</button></div></div>
                   <ul class="comment-list"></ul>
@@ -847,23 +897,55 @@ async function loadCommentsFromWorker(slug) {
         container.innerHTML = cardsHtml;
       }
 
-      // 为每个卡片绑定评论交互
+      // 绑定交互逻辑
       pageArticles.forEach(art => {
-        const link = art.链接;
-        const card = document.querySelector(`.card[data-article-link="${link}"]`);
+        const slug = getSlugFromUrl(art.链接);
+        const card = document.querySelector(`.card[data-article-link="${escapeHtml(art.链接)}"]`);
         if (!card) return;
+
+        const likeBtn = card.querySelector('.like-btn');
+        const likeCountSpan = likeBtn.querySelector('.like-count');
         const panel = card.querySelector('.comment-panel');
         const toggle = card.querySelector('.comment-toggle');
         const nicknameInput = panel.querySelector('.comment-nickname');
         const textInput = panel.querySelector('.comment-text');
         const submitBtn = panel.querySelector('.comment-submit');
-        const listContainer = panel.querySelector('.comment-list');
 
-        // 初始化加载评论
-        const slug = getSlugFromUrl(art.链接);
+        // 1. 初始化：加载点赞数
+        (async () => {
+          try {
+            const res = await fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`);
+            const data = await res.json();
+            likeCountSpan.innerText = data.likes || 0;
+            if (localStorage.getItem('liked_' + slug)) {
+              likeBtn.style.color = '#ef4444';
+              likeBtn.querySelector('i').className = 'fas fa-heart';
+            }
+          } catch (e) { console.error("Load likes error:", e); }
+        })();
+
+        // 2. 初始化：加载评论列表
         renderCommentPanel(art, panel);
 
-        // 折叠/展开
+        // 3. 点赞点击事件
+        likeBtn.addEventListener('click', async () => {
+          if (localStorage.getItem('liked_' + slug)) return; 
+          
+          likeBtn.style.color = '#ef4444';
+          likeBtn.querySelector('i').className = 'fas fa-heart';
+          
+          try {
+            const res = await fetch(`${WORKER_URL}likes`, {
+              method: 'POST',
+              body: JSON.stringify({ slug })
+            });
+            const data = await res.json();
+            likeCountSpan.innerText = data.likes;
+            localStorage.setItem('liked_' + slug, 'true');
+          } catch (e) { console.error("Like error:", e); }
+        });
+
+        // 4. 评论面板折叠/展开
         toggle.addEventListener('click', (e) => {
           e.stopPropagation();
           panel.classList.toggle('show');
@@ -871,29 +953,20 @@ async function loadCommentsFromWorker(slug) {
           if (icon) icon.style.transform = panel.classList.contains('show') ? 'rotate(180deg)' : 'rotate(0deg)';
         });
 
-        // 提交评论
+        // 5. 提交评论逻辑
         submitBtn.addEventListener('click', async () => {
           const nickname = nicknameInput.value.trim();
           const content = textInput.value.trim();
-          if (!content) { alert('请输入评论内容'); return; }
-          if (!nickname) { alert('请输入昵称'); return; }
+          if (!content || !nickname) { alert('请填写昵称和内容'); return; }
           
-          // 禁用按钮防止重复提交
           submitBtn.disabled = true;
-          submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 提交中';
+          submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i>';
           
           try {
             await submitCommentToWorker(slug, nickname, content);
-            // 重新加载评论
             await renderCommentPanel(art, panel);
             nicknameInput.value = '';
             textInput.value = '';
-            // 自动展开面板
-            if (!panel.classList.contains('show')) {
-              panel.classList.add('show');
-              const icon = toggle.querySelector('.fa-chevron-down');
-              if (icon) icon.style.transform = 'rotate(180deg)';
-            }
           } catch (error) {
             alert('提交失败：' + error.message);
           } finally {
