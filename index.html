@@ -994,7 +994,7 @@ function renderCards() {
         const stats = window.statsMap[slug] || { likes: 0, comments: 0 };
         const isLiked = checkIfLiked(slug); // 检查本地是否有记录
 
-        return `
+        return 
         <div class="card">
             <div class="card-title">${art.标题}</div>
             <div class="card-meta">
