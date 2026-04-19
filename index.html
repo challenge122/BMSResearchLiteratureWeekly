@@ -891,14 +891,33 @@ async function loadCommentsFromWorker(slug) {
       );
     }
 
-    function getFilteredArticles() {
-      return articles.filter(article => {
+// --- 替换后的增强过滤与排序函数 ---
+function getFilteredArticles() {
+    // 1. 先过滤数据
+    let filtered = articles.filter(article => {
         const catMatch = (currentCategory === '全部') || (article.分类 === currentCategory);
         const srcMatch = (currentSource === '全部') || (article.公众号名称 === currentSource);
         const searchMatch = matchesSearch(article, searchKeyword);
         return catMatch && srcMatch && searchMatch;
-      });
-    }
+    });
+
+    // 2. 再执行排序逻辑
+    filtered.sort((a, b) => {
+        const slugA = getSlugFromUrl(a.链接);
+        const slugB = getSlugFromUrl(b.链接);
+        // 如果还没有抓取到点赞数，默认为 0
+        const statsA = (typeof statsMap !== 'undefined' && statsMap[slugA]) ? statsMap[slugA] : { likes: 0, comments: 0 };
+        const statsB = (typeof statsMap !== 'undefined' && statsMap[slugB]) ? statsMap[slugB] : { likes: 0, comments: 0 };
+
+        if (typeof currentSort !== 'undefined') {
+            if (currentSort === 'likes') return statsB.likes - statsA.likes;
+            if (currentSort === 'comments') return statsB.comments - statsA.comments;
+        }
+        // 默认按日期排序
+        return new Date(b.发布日期) - new Date(a.发布日期);
+    });
+    return filtered;
+}
 
   function renderCards() {
       const filtered = getFilteredArticles();
@@ -1089,62 +1108,46 @@ async function loadCommentsFromWorker(slug) {
       renderFilterTags();
       renderAll();
     });
-  })();
 
-// --- 下拉排序功能逻辑 ---
-let currentSort = 'date';
-let statsMap = {}; // 存储点赞和评论数
+    // --- 排序相关的全局配置 ---
+window.currentSort = 'date';
+window.statsMap = {}; 
 
-// 1. 拦截并重新定义过滤函数，加入排序逻辑
-const originalGetFilteredArticles = getFilteredArticles;
-getFilteredArticles = function() {
-    let filtered = articles.filter(article => {
-        const catMatch = (currentCategory === '全部') || (article.分类 === currentCategory);
-        const srcMatch = (currentSource === '全部') || (article.公众号名称 === currentSource);
-        const searchMatch = matchesSearch(article, searchKeyword);
-        return catMatch && srcMatch && searchMatch;
+// 监听下拉菜单切换
+const sortSelector = document.getElementById('sort-selector');
+if(sortSelector) {
+    sortSelector.addEventListener('change', function(e) {
+        window.currentSort = e.target.value;
+        currentPage = 1;
+        renderCards();
     });
+}
 
-    // 执行排序
-    filtered.sort((a, b) => {
-        const slugA = getSlugFromUrl(a.链接);
-        const slugB = getSlugFromUrl(b.链接);
-        const statsA = statsMap[slugA] || { likes: 0, comments: 0 };
-        const statsB = statsMap[slugB] || { likes: 0, comments: 0 };
-
-        if (currentSort === 'likes') return statsB.likes - statsA.likes;
-        if (currentSort === 'comments') return statsB.comments - statsA.comments;
-        // 默认按日期
-        return new Date(b.发布日期) - new Date(a.发布日期);
-    });
-    return filtered;
-};
-
-// 2. 监听下拉菜单切换
-document.getElementById('sort-selector').addEventListener('change', function(e) {
-    currentSort = e.target.value;
-    currentPage = 1;
-    renderCards();
-});
-
-// 3. 静默同步数据（用于排序对比）
+// 静默同步点赞和评论数据
 async function syncStats() {
-    for (let art of articles) {
+    const promises = articles.map(async (art) => {
         const slug = getSlugFromUrl(art.链接);
         try {
             const [lRes, cRes] = await Promise.all([
                 fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
                 fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
             ]);
-            statsMap[slug] = { 
+            window.statsMap[slug] = { 
                 likes: lRes.likes || 0, 
                 comments: Array.isArray(cRes) ? cRes.length : 0 
             };
-        } catch (e) {}
-    }
+        } catch (e) {
+            window.statsMap[slug] = { likes: 0, comments: 0 };
+        }
+    });
+    await Promise.all(promises);
+    // 数据抓取完后静默刷新一次排序
+    if(window.currentSort !== 'date') renderCards();
 }
-// 启动同步
 syncStats();
+  })();
+
+
 </script>
 </body>
 </html>
