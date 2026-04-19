@@ -668,6 +668,14 @@
     </div>
     <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
       <span class="filter-tag all-tag" id="reset-filters-btn" style="background:#f8fafc;"><i class="fas fa-undo-alt"></i> 重置全部筛选</span>
+      <div class="filter-group" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+  <div class="filter-label"><i class="fas fa-sort-amount-down"></i> 排序方式</div>
+  <div class="tag-container" id="sort-options">
+    <div class="filter-tag sort-tag active" data-sort="date">📅 按时间</div>
+    <div class="filter-tag sort-tag" data-sort="likes">🔥 按点赞</div>
+    <div class="filter-tag sort-tag" data-sort="comments">💬 按评论</div>
+  </div>
+</div>
     </div>
   </div>
 
@@ -1037,6 +1045,70 @@ async function loadCommentsFromWorker(slug) {
       renderAll();
     });
   })();
+
+  // --- 排序功能增强代码 ---
+let currentSort = 'date'; 
+let statsMap = {}; 
+
+// 1. 修改原本的过滤函数，加入排序规则
+const originalGetFilteredArticles = getFilteredArticles;
+getFilteredArticles = function() {
+    let filtered = articles.filter(article => {
+        const catMatch = (currentCategory === '全部') || (article.分类 === currentCategory);
+        const srcMatch = (currentSource === '全部') || (article.公众号名称 === currentSource);
+        const searchMatch = matchesSearch(article, searchKeyword);
+        return catMatch && srcMatch && searchMatch;
+    });
+
+    filtered.sort((a, b) => {
+        const slugA = getSlugFromUrl(a.链接);
+        const slugB = getSlugFromUrl(b.链接);
+        const statsA = statsMap[slugA] || { likes: 0, comments: 0 };
+        const statsB = statsMap[slugB] || { likes: 0, comments: 0 };
+
+        if (currentSort === 'likes') return statsB.likes - statsA.likes;
+        if (currentSort === 'comments') return statsB.comments - statsA.comments;
+        return new Date(b.发布日期) - new Date(a.发布日期);
+    });
+    return filtered;
+};
+
+// 2. 绑定排序按钮的点击事件
+document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('sort-tag')) {
+        document.querySelectorAll('.sort-tag').forEach(t => t.classList.remove('active'));
+        e.target.classList.add('active');
+        currentSort = e.target.getAttribute('data-sort');
+        currentPage = 1;
+        renderCards();
+    }
+});
+
+// 3. 自动抓取点赞和评论数据（用于排序）
+async function syncAllStats() {
+    console.log("开始同步点赞数据用于排序...");
+    const promises = articles.map(async (art) => {
+        const slug = getSlugFromUrl(art.链接);
+        try {
+            const [likeRes, commRes] = await Promise.all([
+                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
+            ]);
+            statsMap[slug] = {
+                likes: likeRes.likes || 0,
+                comments: Array.isArray(commRes) ? commRes.length : 0
+            };
+        } catch (e) {
+            statsMap[slug] = { likes: 0, comments: 0 };
+        }
+    });
+    await Promise.all(promises);
+    renderCards(); // 数据加载完后自动刷新一次，排好序
+}
+
+// 页面加载 2 秒后自动开始静默同步数据
+setTimeout(syncAllStats, 2000);
+  
 </script>
 </body>
 </html>
