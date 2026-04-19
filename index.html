@@ -900,30 +900,33 @@ async function loadCommentsFromWorker(slug) {
 
 // --- 替换后的增强过滤与排序函数 ---
 function getFilteredArticles() {
-    // 1. 先过滤数据
-    let filtered = articles.filter(article => {
-        const catMatch = (currentCategory === '全部') || (article.分类 === currentCategory);
-        const srcMatch = (currentSource === '全部') || (article.公众号名称 === currentSource);
-        const searchMatch = matchesSearch(article, searchKeyword);
-        return catMatch && srcMatch && searchMatch;
-    });
+  let filtered = articles.filter(art => {
+    const matchCategory = currentCategory === '全部' || art.分类 === currentCategory;
+    const matchSource = currentSource === '全部' || art.公众号名称 === currentSource;
+    const matchKeyword = !searchKeyword || 
+                         art.标题.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+                         art.Highlight.toLowerCase().includes(searchKeyword.toLowerCase());
+    return matchCategory && matchSource && matchKeyword;
+  });
 
-    // 2. 再执行排序逻辑
-    filtered.sort((a, b) => {
-        const slugA = getSlugFromUrl(a.链接);
-        const slugB = getSlugFromUrl(b.链接);
-        // 如果还没有抓取到点赞数，默认为 0
-        const statsA = (typeof statsMap !== 'undefined' && statsMap[slugA]) ? statsMap[slugA] : { likes: 0, comments: 0 };
-        const statsB = (typeof statsMap !== 'undefined' && statsMap[slugB]) ? statsMap[slugB] : { likes: 0, comments: 0 };
+  // --- 新增排序逻辑 ---
+  filtered.sort((a, b) => {
+    const slugA = getSlugFromUrl(a.链接);
+    const slugB = getSlugFromUrl(b.链接);
+    const statsA = window.statsMap[slugA] || { likes: 0, comments: 0 };
+    const statsB = window.statsMap[slugB] || { likes: 0, comments: 0 };
 
-        if (typeof currentSort !== 'undefined') {
-            if (currentSort === 'likes') return statsB.likes - statsA.likes;
-            if (currentSort === 'comments') return statsB.comments - statsA.comments;
-        }
-        // 默认按日期排序
-        return new Date(b.发布日期) - new Date(a.发布日期);
-    });
-    return filtered;
+    if (window.currentSort === 'likes') {
+      return statsB.likes - statsA.likes; // 点赞从高到低
+    } else if (window.currentSort === 'comments') {
+      return statsB.comments - statsA.comments; // 评论从高到低
+    } else {
+      // 默认按日期排序
+      return new Date(b.发布日期) - new Date(a.发布日期);
+    }
+  });
+
+  return filtered;
 }
 
 function renderCards() {
@@ -1141,40 +1144,65 @@ if(sortSelector) {
     sortSelector.addEventListener('change', function(e) {
         window.currentSort = e.target.value;
         currentPage = 1;
-        renderCards();
+        
+        // 如果数据还没抓完就选了点赞排序，给用户一个微调提示
+        if (window.currentSort !== 'date') {
+            console.log("正在按照实时数据重新排序...");
+        }
+        
+        renderAll(); // 重新渲染列表并触发一次数据校验
     });
 }
 
 // 静默同步点赞和评论数据
 // 稳定版：静默分批同步点赞和评论数据
+
+    // 全局变量，防止重复抓取
+let isFullSyncing = false;
+
 async function syncStats() {
-    // 核心修复：每次只发 4 个请求（分批加载）。完美避开手机浏览器最高 6 个并发连接的限制！
-    for (let i = 0; i < articles.length; i += 4) {
-        const batch = articles.slice(i, i + 4);
-        const promises = batch.map(async (art) => {
+    const allFiltered = getFilteredArticles();
+    // 1. 优先级：先找出当前页的 slug
+    const start = (currentPage - 1) * cardsPerPage;
+    const pageArticles = allFiltered.slice(start, start + cardsPerPage);
+    const pageSlugs = pageArticles.map(art => getSlugFromUrl(art.链接));
+
+    // 2. 快速抓取当前页数据
+    await Promise.all(pageSlugs.map(async (slug) => {
+        if (window.statsMap[slug]) return;
+        try {
+            const [lRes, cRes] = await Promise.all([
+                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
+            ]);
+            window.statsMap[slug] = { likes: lRes.likes || 0, comments: Array.isArray(cRes) ? cRes.length : 0 };
+        } catch (e) { window.statsMap[slug] = { likes: 0, comments: 0 }; }
+    }));
+    
+    // 当前页数据一到，立刻刷新显示
+    renderCards();
+
+    // 3. 后台静默抓取剩余所有数据（为了支持点击排序时的准确性）
+    if (isFullSyncing) return; 
+    isFullSyncing = true;
+
+    // 分批抓取，每组 5 个，避免手机网络堵塞
+    for (let i = 0; i < articles.length; i += 5) {
+        const batch = articles.slice(i, i + 5);
+        await Promise.all(batch.map(async (art) => {
             const slug = getSlugFromUrl(art.链接);
+            if (window.statsMap[slug]) return; // 跳过已抓取的
             try {
-                // 移除了 5 秒超时，让手机网络有充足时间排队处理
                 const [lRes, cRes] = await Promise.all([
                     fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
                     fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
                 ]);
-                window.statsMap[slug] = { 
-                    likes: lRes.likes || 0, 
-                    comments: Array.isArray(cRes) ? cRes.length : 0 
-                };
-            } catch (e) {
-                window.statsMap[slug] = { likes: 0, comments: 0 };
-            }
-        });
-        
-        // 等待这 4 个文章查完，再去查下 4 个
-        await Promise.all(promises); 
+                window.statsMap[slug] = { likes: lRes.likes || 0, comments: Array.isArray(cRes) ? cRes.length : 0 };
+            } catch (e) { window.statsMap[slug] = { likes: 0, comments: 0 }; }
+        }));
     }
-    
-    // 所有数据稳定加载完毕后，刷新一次页面，把数字显示出来
-    renderCards(); 
 }
+    
 syncStats();
   })();
 
