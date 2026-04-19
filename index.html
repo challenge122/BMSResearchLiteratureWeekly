@@ -761,10 +761,17 @@ async function loadCommentsFromWorker(slug) {
         // 按时间倒序（最新的在前）
         comments.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).forEach(c => {
           const timeStr = c.timestamp ? new Date(c.timestamp).toLocaleString('zh-CN', {hour12: false, hour: '2-digit', minute:'2-digit', month:'2-digit', day:'2-digit'}) : '';
-          html += `<li class="comment-item">
-            <div class="comment-meta"><span class="comment-author"><i class="far fa-user-circle"></i> ${escapeHtml(c.author || '匿名')}</span><span class="comment-time">${escapeHtml(timeStr)}</span></div>
-            <div class="comment-body">${escapeHtml(c.content || '')}</div>
-          </li>`;
+        html += `<li class="comment-item" style="list-style: none; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed #eee;">
+  <div class="comment-meta" style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+    <span class="comment-author" style="font-weight: bold; color: #4682c8;">
+      <i class="far fa-user-circle"></i> ${escapeHtml(c.author || '匿名')}
+    </span>
+    <span class="comment-time" style="font-size: 0.85em; color: #999;">${escapeHtml(timeStr)}</span>
+  </div>
+  <div class="comment-body" style="color: #333; line-height: 1.5; word-wrap: break-word;">
+    ${escapeHtml(c.body || c.content || '')} 
+  </div>
+</li>`;
         });
         listContainer.innerHTML = html;
       }
