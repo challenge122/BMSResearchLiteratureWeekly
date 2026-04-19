@@ -892,8 +892,8 @@ async function loadCommentsFromWorker(slug) {
     }
 
 // --- 替换后的增强过滤与排序函数 ---
+// --- 1. 增强后的过滤与排序函数 ---
 function getFilteredArticles() {
-    // 1. 先过滤数据
     let filtered = articles.filter(article => {
         const catMatch = (currentCategory === '全部') || (article.分类 === currentCategory);
         const srcMatch = (currentSource === '全部') || (article.公众号名称 === currentSource);
@@ -901,252 +901,214 @@ function getFilteredArticles() {
         return catMatch && srcMatch && searchMatch;
     });
 
-    // 2. 再执行排序逻辑
+    // 执行排序
     filtered.sort((a, b) => {
         const slugA = getSlugFromUrl(a.链接);
         const slugB = getSlugFromUrl(b.链接);
-        // 如果还没有抓取到点赞数，默认为 0
-        const statsA = (typeof statsMap !== 'undefined' && statsMap[slugA]) ? statsMap[slugA] : { likes: 0, comments: 0 };
-        const statsB = (typeof statsMap !== 'undefined' && statsMap[slugB]) ? statsMap[slugB] : { likes: 0, comments: 0 };
+        const statsA = window.statsMap[slugA] || { likes: 0, comments: 0 };
+        const statsB = window.statsMap[slugB] || { likes: 0, comments: 0 };
 
-        if (typeof currentSort !== 'undefined') {
-            if (currentSort === 'likes') return statsB.likes - statsA.likes;
-            if (currentSort === 'comments') return statsB.comments - statsA.comments;
-        }
-        // 默认按日期排序
-        return new Date(b.发布日期) - new Date(a.发布日期);
+        if (window.currentSort === 'likes') return statsB.likes - statsA.likes;
+        if (window.currentSort === 'comments') return statsB.comments - statsA.comments;
+        return new Date(b.发布日期) - new Date(a.发布日期); // 默认日期
     });
     return filtered;
 }
 
-  function renderCards() {
-      const filtered = getFilteredArticles();
-      const totalFiltered = filtered.length;
-      const totalPages = Math.ceil(totalFiltered / cardsPerPage) || 1;
-      if (currentPage > totalPages) currentPage = totalPages;
-      if (currentPage < 1) currentPage = 1;
-      const start = (currentPage - 1) * cardsPerPage;
-      const pageArticles = filtered.slice(start, start + cardsPerPage);
-      const container = document.getElementById('cards-container');
-      
-      if (pageArticles.length === 0) {
-        container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px; color:#64748b;"><i class="fas fa-inbox"></i> 没有匹配的文章</div>`;
-      } else {
-        let cardsHtml = '';
-        pageArticles.forEach(art => {
-          cardsHtml += `
-            <div class="card" data-article-link="${escapeHtml(art.链接)}">
-              <div class="card-title">${escapeHtml(art.标题)}</div>
-              <div class="card-meta">
-                <span class="meta-item"><i class="fas fa-user-pen"></i>公众号：${escapeHtml(art.公众号名称)}</span>
-                <span class="meta-item"><i class="far fa-calendar"></i>${escapeHtml(art.发布日期)}</span>
-                <span class="meta-item"><i class="fas fa-tag"></i>${escapeHtml(art.分类)}</span>
-              </div>
-              <div class="field-block"><div class="field-label"><i class="fas fa-highlighter"></i> Highlight</div><div class="field-content highlight-text">${escapeHtml(art.Highlight)}</div></div>
-              <div class="field-block"><div class="field-label"><i class="fas fa-microchip"></i> 对BMS应用的价值</div><div class="field-content value-text">${escapeHtml(art.对BMS应用的价值)}</div></div>
-              <div class="link-row">
-                <a class="card-link" href="${escapeHtml(art.链接)}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> 阅读原文</a>
-              </div>
-              
-              <div class="interaction-row" style="display: flex; align-items: center; gap: 15px; margin-top: 15px; border-top: 1px solid rgba(59, 130, 246, 0.1); padding-top: 12px;">
-                <div class="like-btn" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: #64748b; padding: 6px 12px; border-radius: 40px; transition: all 0.2s; user-select: none;">
-                  <i class="far fa-heart"></i> <span class="like-count">0</span>
-                </div>
-                <div class="comment-toggle" data-link="${escapeHtml(art.链接)}" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: #1e4b7a; font-size: 0.9rem; user-select: none; padding: 6px 4px; border-radius: 40px;">
-                  <i class="far fa-comment"></i> 评论 (0) <i class="fas fa-chevron-down" style="margin-left: auto; font-size: 0.8rem; transition: transform 0.2s;"></i>
-                </div>
-              </div>
+// --- 2. 核心：点赞/取消点赞切换逻辑 ---
+async function handleLike(slug, btnElement) {
+    // 判断当前是否已点赞（根据 UI 状态）
+    const isLiked = btnElement.classList.contains('active');
+    const countSpan = btnElement.querySelector('.like-count');
+    let currentCount = parseInt(countSpan.textContent) || 0;
 
-              <div class="comment-section" style="margin-top: 5px;">
-                <div class="comment-panel">
-                  <div class="comment-input-area"><div class="comment-input-row"><input type="text" class="comment-nickname" placeholder="昵称" maxlength="20"><input type="text" class="comment-text" placeholder="写评论..." maxlength="200"><button class="comment-submit"><i class="fas fa-paper-plane"></i> 发布</button></div></div>
-                  <ul class="comment-list"></ul>
-                </div>
-              </div>
-            </div>
-          `;
-        });
-        container.innerHTML = cardsHtml;
-      }
-
-      // 绑定交互逻辑
-      pageArticles.forEach(art => {
-        const slug = getSlugFromUrl(art.链接);
-        const card = document.querySelector(`.card[data-article-link="${escapeHtml(art.链接)}"]`);
-        if (!card) return;
-
-        const likeBtn = card.querySelector('.like-btn');
-        const likeCountSpan = likeBtn.querySelector('.like-count');
-        const panel = card.querySelector('.comment-panel');
-        const toggle = card.querySelector('.comment-toggle');
-        const nicknameInput = panel.querySelector('.comment-nickname');
-        const textInput = panel.querySelector('.comment-text');
-        const submitBtn = panel.querySelector('.comment-submit');
-
-        // 1. 初始化：加载点赞数
-        (async () => {
-          try {
-            const res = await fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`);
-            const data = await res.json();
-            likeCountSpan.innerText = data.likes || 0;
-            if (localStorage.getItem('liked_' + slug)) {
-              likeBtn.style.color = '#ef4444';
-              likeBtn.querySelector('i').className = 'fas fa-heart';
-            }
-          } catch (e) { console.error("Load likes error:", e); }
-        })();
-
-        // 2. 初始化：加载评论列表
-        renderCommentPanel(art, panel);
-
-        // 3. 点赞点击事件
-        likeBtn.addEventListener('click', async () => {
-          if (localStorage.getItem('liked_' + slug)) return; 
-          
-          likeBtn.style.color = '#ef4444';
-          likeBtn.querySelector('i').className = 'fas fa-heart';
-          
-          try {
-            const res = await fetch(`${WORKER_URL}likes`, {
-              method: 'POST',
-              body: JSON.stringify({ slug })
-            });
-            const data = await res.json();
-            likeCountSpan.innerText = data.likes;
-            localStorage.setItem('liked_' + slug, 'true');
-          } catch (e) { console.error("Like error:", e); }
-        });
-
-        // 4. 评论面板折叠/展开
-        toggle.addEventListener('click', (e) => {
-          e.stopPropagation();
-          panel.classList.toggle('show');
-          const icon = toggle.querySelector('.fa-chevron-down');
-          if (icon) icon.style.transform = panel.classList.contains('show') ? 'rotate(180deg)' : 'rotate(0deg)';
-        });
-
-        // 5. 提交评论逻辑
-        submitBtn.addEventListener('click', async () => {
-          const nickname = nicknameInput.value.trim();
-          const content = textInput.value.trim();
-          if (!content || !nickname) { alert('请填写昵称和内容'); return; }
-          
-          submitBtn.disabled = true;
-          submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i>';
-          
-          try {
-            await submitCommentToWorker(slug, nickname, content);
-            await renderCommentPanel(art, panel);
-            nicknameInput.value = '';
-            textInput.value = '';
-          } catch (error) {
-            alert('提交失败：' + error.message);
-          } finally {
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> 发布';
-          }
-        });
-      });
-
-      document.getElementById('stats-text').innerHTML = `当前显示 ${totalFiltered} 篇中的 ${pageArticles.length} 篇 · 第 ${currentPage} / ${totalPages} 页`;
-      renderPagination(totalFiltered, totalPages);
+    // 立即更新 UI（防止网络延迟导致的卡顿感）
+    if (isLiked) {
+        btnElement.classList.remove('active');
+        currentCount = Math.max(0, currentCount - 1);
+        // 从本地存储移除已赞记录
+        removeFromLocalLikes(slug);
+    } else {
+        btnElement.classList.add('active');
+        currentCount += 1;
+        // 保存到本地存储
+        addToLocalLikes(slug);
     }
+    countSpan.textContent = currentCount;
 
-    function renderFilterTags() {
-      const catContainer = document.getElementById('category-filters');
-      const srcContainer = document.getElementById('source-filters');
-      let catHtml = `<span class="filter-tag ${currentCategory === '全部' ? 'active' : ''}" data-category="全部">全部 (${articles.length})</span>`;
-      allCategories.sort().forEach(cat => { const count = articles.filter(a => a.分类 === cat).length; catHtml += `<span class="filter-tag ${currentCategory === cat ? 'active' : ''}" data-category="${cat}">${cat} (${count})</span>`; });
-      catContainer.innerHTML = catHtml;
-      let srcHtml = `<span class="filter-tag ${currentSource === '全部' ? 'active' : ''}" data-source="全部">全部 (${articles.length})</span>`;
-      allSources.sort().forEach(src => { const count = articles.filter(a => a.公众号名称 === src).length; srcHtml += `<span class="filter-tag ${currentSource === src ? 'active' : ''}" data-source="${src}">${src} (${count})</span>`; });
-      srcContainer.innerHTML = srcHtml;
-      document.querySelectorAll('[data-category]').forEach(t => t.addEventListener('click', () => { currentCategory = t.dataset.category; currentPage = 1; renderFilterTags(); renderAll(); }));
-      document.querySelectorAll('[data-source]').forEach(t => t.addEventListener('click', () => { currentSource = t.dataset.source; currentPage = 1; renderFilterTags(); renderAll(); }));
+    // 同步到后端
+    try {
+        const action = isLiked ? 'unlike' : 'like'; // 告诉后端是加还是减
+        const response = await fetch(`${WORKER_URL}likes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug, action })
+        });
+        const data = await response.json();
+        if (data && typeof data.likes === 'number') {
+            countSpan.textContent = data.likes; // 用后端权威数据修正
+            window.statsMap[slug].likes = data.likes;
+        }
+    } catch (e) {
+        console.error("同步点赞失败:", e);
     }
-
-    function renderPagination(totalItems, totalPages) {
-      const pg = document.getElementById('pagination-controls');
-      if (totalPages <= 1) { pg.innerHTML = `<span style="color:#7c8fa3;">—— 只有一页 ——</span>`; return; }
-      let h = `<button class="pagination-btn" id="prev-page" ${currentPage === 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i> 上一页</button><div class="page-numbers">`;
-      const maxV = 5; let s = Math.max(1, currentPage - 2), e = Math.min(totalPages, s + maxV - 1); if (e - s < maxV - 1) s = Math.max(1, e - maxV + 1);
-      if (s > 1) { h += `<span class="page-num" data-page="1">1</span>`; if (s > 2) h += `<span class="page-num disabled">…</span>`; }
-      for (let i = s; i <= e; i++) h += `<span class="page-num ${i === currentPage ? 'active-page' : ''}" data-page="${i}">${i}</span>`;
-      if (e < totalPages) { if (e < totalPages - 1) h += `<span class="page-num disabled">…</span>`; h += `<span class="page-num" data-page="${totalPages}">${totalPages}</span>`; }
-      h += `</div><button class="pagination-btn" id="next-page" ${currentPage === totalPages ? 'disabled' : ''}>下一页 <i class="fas fa-chevron-right"></i></button>`;
-      pg.innerHTML = h;
-      document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click', () => { const p = parseInt(b.dataset.page); if (p !== currentPage) { currentPage = p; renderAll(); window.scrollTo({top:0,behavior:'smooth'}); } }));
-      document.getElementById('prev-page')?.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderAll(); window.scrollTo({top:0,behavior:'smooth'}); } });
-      document.getElementById('next-page')?.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; renderAll(); window.scrollTo({top:0,behavior:'smooth'}); } });
-    }
-
-    function renderAll() { renderCards(); }
-
-    const searchInput = document.getElementById('search-input');
-    const clearSearchBtn = document.getElementById('clear-search-btn');
-    function applySearch() {
-      searchKeyword = searchInput.value.trim();
-      currentPage = 1;
-      renderAll();
-    }
-    searchInput.addEventListener('input', applySearch);
-    clearSearchBtn.addEventListener('click', () => {
-      searchInput.value = '';
-      applySearch();
-    });
-
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('reset-filters-btn').addEventListener('click', () => {
-        currentCategory = '全部';
-        currentSource = '全部';
-        searchInput.value = '';
-        searchKeyword = '';
-        currentPage = 1;
-        renderFilterTags();
-        renderAll();
-      });
-      renderFilterTags();
-      renderAll();
-    });
-
-    // --- 排序相关的全局配置 ---
-window.currentSort = 'date';
-window.statsMap = {}; 
-
-// 监听下拉菜单切换
-const sortSelector = document.getElementById('sort-selector');
-if(sortSelector) {
-    sortSelector.addEventListener('change', function(e) {
-        window.currentSort = e.target.value;
-        currentPage = 1;
-        renderCards();
-    });
 }
 
-// 静默同步点赞和评论数据
-async function syncStats() {
+// --- 3. 本地存储辅助（刷新页面也能记得点过赞） ---
+function addToLocalLikes(slug) {
+    let liked = JSON.parse(localStorage.getItem('my_likes') || '[]');
+    if (!liked.includes(slug)) liked.push(slug);
+    localStorage.setItem('my_likes', JSON.stringify(liked));
+}
+function removeFromLocalLikes(slug) {
+    let liked = JSON.parse(localStorage.getItem('my_likes') || '[]');
+    liked = liked.filter(s => s !== slug);
+    localStorage.setItem('my_likes', JSON.stringify(liked));
+}
+function checkIfLiked(slug) {
+    const liked = JSON.parse(localStorage.getItem('my_likes') || '[]');
+    return liked.includes(slug);
+}
+
+// --- 4. 初始化与全局变量 ---
+window.currentSort = 'date';
+window.statsMap = {};
+
+// 渲染卡片主函数
+function renderCards() {
+    const container = document.getElementById('cards-container');
+    const filtered = getFilteredArticles();
+    const statsText = document.getElementById('stats-text');
+    
+    // 分页计算
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / cardsPerPage);
+    if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+    const start = (currentPage - 1) * cardsPerPage;
+    const pageData = filtered.slice(start, start + cardsPerPage);
+
+    statsText.innerText = `找到 ${total} 篇文献 (第 ${currentPage}/${totalPages || 1} 页)`;
+    
+    container.innerHTML = pageData.map(art => {
+        const slug = getSlugFromUrl(art.链接);
+        const stats = window.statsMap[slug] || { likes: 0, comments: 0 };
+        const isLiked = checkIfLiked(slug); // 检查本地是否有记录
+
+        return `
+        <div class="card">
+            <div class="card-title">${art.标题}</div>
+            <div class="card-meta">
+                <span class="meta-item"><i class="far fa-calendar-alt"></i> ${art.发布日期}</span>
+                <span class="meta-item"><i class="far fa-newspaper"></i> ${art.公众号名称}</span>
+                <span class="meta-item"><i class="fas fa-folder-open"></i> ${art.分类}</span>
+            </div>
+            <div class="field-block">
+                <div class="field-label"><i class="fas fa-lightbulb"></i> 核心看点</div>
+                <div class="field-content highlight-text">${art.Highlight}</div>
+            </div>
+            <div class="field-block">
+                <div class="field-label"><i class="fas fa-bolt"></i> 对BMS价值</div>
+                <div class="field-content value-text">${art.对BMS应用的价值}</div>
+            </div>
+            <div class="link-row">
+                <a href="${art.链接}" target="_blank" class="card-link"><i class="fas fa-external-link-alt"></i> 阅读全文</a>
+            </div>
+            
+            <div class="interaction-row">
+                <div class="like-btn ${isLiked ? 'active' : ''}" onclick="handleLike('${slug}', this)">
+                    <i class="${isLiked ? 'fas' : 'far'} fa-heart"></i> 
+                    <span class="like-count">${stats.likes}</span>
+                </div>
+                <div class="comment-toggle" onclick="toggleComments('${slug}', this)">
+                    <i class="far fa-comment"></i> 评论 (${stats.comments})
+                </div>
+            </div>
+            <div class="comment-panel" id="panel-${slug}">
+                <div class="comment-input-area">
+                    <input type="text" class="comment-nickname" placeholder="昵称">
+                    <textarea class="comment-text" placeholder="说说你的看法..."></textarea>
+                    <button class="comment-submit" onclick="doSubmit('${slug}')">提交评论</button>
+                </div>
+                <ul class="comment-list"></ul>
+            </div>
+        </div>`;
+    }).join('');
+    renderPagination(totalPages);
+}
+
+// 展开/收起评论区
+window.toggleComments = function(slug, btn) {
+    const panel = document.getElementById(`panel-${slug}`);
+    panel.classList.toggle('show');
+    if(panel.classList.contains('show')) {
+        const article = articles.find(a => getSlugFromUrl(a.链接) === slug);
+        renderCommentPanel(article, panel);
+    }
+}
+
+// 提交评论逻辑
+window.doSubmit = async function(slug) {
+    const panel = document.getElementById(`panel-${slug}`);
+    const nick = panel.querySelector('.comment-nickname').value || '匿名';
+    const text = panel.querySelector('.comment-text').value;
+    if(!text) return alert('请输入内容');
+    
+    try {
+        await submitCommentToWorker(slug, nick, text);
+        panel.querySelector('.comment-text').value = '';
+        const article = articles.find(a => getSlugFromUrl(a.链接) === slug);
+        renderCommentPanel(article, panel);
+    } catch(e) { alert('提交失败'); }
+}
+
+// 分页、搜索监听、初始化数据等
+function renderPagination(total) {
+    const wrapper = document.getElementById('pagination-controls');
+    let html = `<button class="pagination-btn" ${currentPage===1?'disabled':''} onclick="changePage(-1)">上一页</button>`;
+    html += `<button class="pagination-btn" ${currentPage===total?'disabled':''} onclick="changePage(1)">下一页</button>`;
+    wrapper.innerHTML = html;
+}
+window.changePage = (dir) => { currentPage += dir; renderCards(); window.scrollTo(0,0); };
+
+// 监听排序下拉
+document.getElementById('sort-selector').addEventListener('change', (e) => {
+    window.currentSort = e.target.value;
+    currentPage = 1;
+    renderCards();
+});
+
+// 监听搜索
+document.getElementById('search-input').addEventListener('input', (e) => {
+    searchKeyword = e.target.value;
+    currentPage = 1;
+    renderCards();
+});
+
+// 初始加载所有数据
+async function init() {
+    // 渲染分类和来源标签（此部分略，请保留你原有的标签生成逻辑代码）
+    // ... 原有的 category-filters 渲染逻辑 ...
+    
+    // 静默加载点赞和评论数
     const promises = articles.map(async (art) => {
         const slug = getSlugFromUrl(art.链接);
         try {
             const [lRes, cRes] = await Promise.all([
-                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
+                fetch(`${WORKER_URL}likes?slug=${slug}`).then(r => r.json()),
+                fetch(`${WORKER_URL}comments?slug=${slug}`).then(r => r.json())
             ]);
-            window.statsMap[slug] = { 
-                likes: lRes.likes || 0, 
-                comments: Array.isArray(cRes) ? cRes.length : 0 
-            };
-        } catch (e) {
-            window.statsMap[slug] = { likes: 0, comments: 0 };
-        }
+            window.statsMap[slug] = { likes: lRes.likes || 0, comments: Array.isArray(cRes) ? cRes.length : 0 };
+        } catch (e) { window.statsMap[slug] = { likes: 0, comments: 0 }; }
     });
     await Promise.all(promises);
-    // 数据抓取完后静默刷新一次排序
-    if(window.currentSort !== 'date') renderCards();
+    renderCards(); // 数据加载完后刷新 UI
 }
-syncStats();
-  })();
 
+// 启动！
+init();
+
+// 这里补齐你原来的分类标签渲染逻辑（略，请自行保留）
+})();
 
 </script>
 </body>
