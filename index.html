@@ -1155,7 +1155,9 @@ async function syncStats() {
         const slug = getSlugFromUrl(art.链接);
         try {
             const [lRes, cRes] = await Promise.all([
-                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`, {
+    headers: { 'Accept': 'application/json' }
+}).then(r => r.json()),
                 fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
             ]);
             window.statsMap[slug] = { 
