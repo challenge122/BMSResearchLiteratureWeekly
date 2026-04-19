@@ -596,6 +596,46 @@
       margin-right: 2px;
     }
 
+
+    /* 排序下拉菜单专用样式 */
+.sort-container {
+  display: flex;
+  justify-content: flex-end; /* 强制靠右 */
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 0 10px;
+}
+
+.sort-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: white;
+  border: 1px solid #cbdbe9;
+  border-radius: 12px;
+  padding: 8px 15px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.sort-select-wrapper label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2a577a;
+  margin-right: 8px;
+}
+
+.sort-select-wrapper select {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.9rem;
+  color: #1e3a5f;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+}
+    
 /* 点赞按钮样式 */
 .interaction-row {
   display: flex;
@@ -673,12 +713,15 @@
     </div>
   </div>
 
-   <div class="filter-group" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
-  <div class="filter-label"><i class="fas fa-sort-amount-down"></i> 排序方式</div>
-  <div class="tag-container" id="sort-options">
-    <div class="filter-tag sort-tag active" data-sort="date">📅 按时间</div>
-    <div class="filter-tag sort-tag" data-sort="likes">🔥 按点赞</div>
-    <div class="filter-tag sort-tag" data-sort="comments">💬 按评论</div>
+<div class="sort-container">
+    <div class="sort-select-wrapper">
+      <label><i class="fas fa-sort-amount-down"></i> 排序：</label>
+      <select id="sort-selector">
+        <option value="date">📅 最新发布</option>
+        <option value="likes">🔥 最多点赞</option>
+        <option value="comments">💬 最多评论</option>
+      </select>
+    </div>
   </div>
      
   <!-- 卡片展示区 -->
@@ -1048,11 +1091,11 @@ async function loadCommentsFromWorker(slug) {
     });
   })();
 
-  // --- 排序功能增强代码 ---
-let currentSort = 'date'; 
-let statsMap = {}; 
+// --- 下拉排序功能逻辑 ---
+let currentSort = 'date';
+let statsMap = {}; // 存储点赞和评论数
 
-// 1. 修改原本的过滤函数，加入排序规则
+// 1. 拦截并重新定义过滤函数，加入排序逻辑
 const originalGetFilteredArticles = getFilteredArticles;
 getFilteredArticles = function() {
     let filtered = articles.filter(article => {
@@ -1062,6 +1105,7 @@ getFilteredArticles = function() {
         return catMatch && srcMatch && searchMatch;
     });
 
+    // 执行排序
     filtered.sort((a, b) => {
         const slugA = getSlugFromUrl(a.链接);
         const slugB = getSlugFromUrl(b.链接);
@@ -1070,47 +1114,37 @@ getFilteredArticles = function() {
 
         if (currentSort === 'likes') return statsB.likes - statsA.likes;
         if (currentSort === 'comments') return statsB.comments - statsA.comments;
+        // 默认按日期
         return new Date(b.发布日期) - new Date(a.发布日期);
     });
     return filtered;
 };
 
-// 2. 绑定排序按钮的点击事件
-document.addEventListener('click', function(e) {
-    if (e.target.classList.contains('sort-tag')) {
-        document.querySelectorAll('.sort-tag').forEach(t => t.classList.remove('active'));
-        e.target.classList.add('active');
-        currentSort = e.target.getAttribute('data-sort');
-        currentPage = 1;
-        renderCards();
-    }
+// 2. 监听下拉菜单切换
+document.getElementById('sort-selector').addEventListener('change', function(e) {
+    currentSort = e.target.value;
+    currentPage = 1;
+    renderCards();
 });
 
-// 3. 自动抓取点赞和评论数据（用于排序）
-async function syncAllStats() {
-    console.log("开始同步点赞数据用于排序...");
-    const promises = articles.map(async (art) => {
+// 3. 静默同步数据（用于排序对比）
+async function syncStats() {
+    for (let art of articles) {
         const slug = getSlugFromUrl(art.链接);
         try {
-            const [likeRes, commRes] = await Promise.all([
+            const [lRes, cRes] = await Promise.all([
                 fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`).then(r => r.json()),
                 fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
             ]);
-            statsMap[slug] = {
-                likes: likeRes.likes || 0,
-                comments: Array.isArray(commRes) ? commRes.length : 0
+            statsMap[slug] = { 
+                likes: lRes.likes || 0, 
+                comments: Array.isArray(cRes) ? cRes.length : 0 
             };
-        } catch (e) {
-            statsMap[slug] = { likes: 0, comments: 0 };
-        }
-    });
-    await Promise.all(promises);
-    renderCards(); // 数据加载完后自动刷新一次，排好序
+        } catch (e) {}
+    }
 }
-
-// 页面加载 2 秒后自动开始静默同步数据
-setTimeout(syncAllStats, 2000);
-  
+// 启动同步
+syncStats();
 </script>
 </body>
 </html>
