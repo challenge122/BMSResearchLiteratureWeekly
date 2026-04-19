@@ -1121,44 +1121,18 @@ function getFilteredArticles() {
       applySearch();
     });
 
-    // 注意：这里加了 async，变为异步函数
-    document.addEventListener('DOMContentLoaded', async () => { 
-      
-      // 第一步：先初始化分类和来源的 UI 框架
-      renderCategoryFilters();
-      renderSourceFilters();
-      
-      // 第二步：关键修复！等待数据同步完成
-      // 在这行执行完之前，页面不会渲染文章列表，保证了手机端能看到点赞/评论
-      await syncStats(); 
-      
-      // 第三步：数据到齐后，再执行初次渲染
-      renderAll(); 
-
-      // 第四步：绑定搜索框和其他交互监听
-      const searchInput = document.getElementById('search-input');
-      if (searchInput) {
-        searchInput.addEventListener('input', (e) => {
-          searchKeyword = e.target.value.trim();
-          currentPage = 1;
-          renderAll();
-        });
-      }
-
-      const resetBtn = document.getElementById('reset-filters-btn');
-      if (resetBtn) {
-        resetBtn.addEventListener('click', () => {
-          currentCategory = '全部';
-          currentSource = '全部';
-          searchInput.value = '';
-          searchKeyword = '';
-          currentPage = 1;
-          renderFilterTags();
-          renderAll();
-        });
-      }
-      
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('reset-filters-btn').addEventListener('click', () => {
+        currentCategory = '全部';
+        currentSource = '全部';
+        searchInput.value = '';
+        searchKeyword = '';
+        currentPage = 1;
+        renderFilterTags();
+        renderAll();
+      });
       renderFilterTags();
+      renderAll();
     });
 
     // --- 排序相关的全局配置 ---
