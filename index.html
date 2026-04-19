@@ -720,34 +720,26 @@
     }
 
    // 从 Worker 加载评论
-    async function loadCommentsFromWorker(slug) {
+async function loadCommentsFromWorker(slug) {
       try {
-        // We remove the extra "/" here to prevent double slashes
+        // We use WORKER_URL + 'comments' because your WORKER_URL already has a / at the end
         const res = await fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const comments = await res.json();
         return Array.isArray(comments) ? comments : [];
       } catch (error) {
-        console.warn('加载评论失败:', error);
+        console.error('Failed to load:', error);
         return [];
       }
     }
 
-    // 提交评论到 Worker
     async function submitCommentToWorker(slug, author, content) {
       const response = await fetch(`${WORKER_URL}comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          slug: slug, 
-          author: author, 
-          body: content // "body" matches what we set up in Cloudflare
-        })
+        body: JSON.stringify({ slug, author, content })
       });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${response.status}`);
-      }
+      if (!response.ok) throw new Error('Failed to save');
       return await response.json();
     }
 
