@@ -1151,26 +1151,33 @@ if(sortSelector) {
 
 // 静默同步点赞和评论数据
 async function syncStats() {
+    // 手机端关键修复：添加 headers 并确保所有请求完成后再渲染
     const promises = articles.map(async (art) => {
         const slug = getSlugFromUrl(art.链接);
         try {
+            // 增加超时控制和显式 Header
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 5000); // 5秒超时
+
             const [lRes, cRes] = await Promise.all([
-                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`, {
-    headers: { 'Accept': 'application/json' }
-}).then(r => r.json()),
-                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`).then(r => r.json())
+                fetch(`${WORKER_URL}likes?slug=${encodeURIComponent(slug)}`, { signal: controller.signal }).then(r => r.json()),
+                fetch(`${WORKER_URL}comments?slug=${encodeURIComponent(slug)}`, { signal: controller.signal }).then(r => r.json())
             ]);
+            clearTimeout(id);
+
             window.statsMap[slug] = { 
                 likes: lRes.likes || 0, 
                 comments: Array.isArray(cRes) ? cRes.length : 0 
             };
         } catch (e) {
+            console.error("加载数据失败:", e);
             window.statsMap[slug] = { likes: 0, comments: 0 };
         }
     });
+
     await Promise.all(promises);
-    // 数据抓取完后静默刷新一次排序
-    if(window.currentSort !== 'date') renderCards();
+    // 核心修复：数据同步完后，必须强制触发一次渲染，否则手机端会显示空白
+    renderCards(); 
 }
 syncStats();
   })();
