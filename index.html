@@ -999,22 +999,48 @@ function getFilteredArticles() {
         // 2. 初始化：加载评论列表
         renderCommentPanel(art, panel);
 
-        // 3. 点赞点击事件
+        // 3. 点赞/取消点赞切换点击事件
         likeBtn.addEventListener('click', async () => {
-          if (localStorage.getItem('liked_' + slug)) return; 
-          
-          likeBtn.style.color = '#ef4444';
-          likeBtn.querySelector('i').className = 'fas fa-heart';
+          // 检查本地存储，判断当前状态是“已点赞”还是“未点赞”
+          const isLiked = localStorage.getItem('liked_' + slug) === 'true';
+          const action = isLiked ? 'unlike' : 'like'; // 如果已点赞，动作就是取消；反之亦然
+
+          // 1. 立即更新 UI 样式（增强用户体验，不等待接口返回）
+          if (action === 'like') {
+            likeBtn.style.color = '#ef4444';
+            likeBtn.querySelector('i').className = 'fas fa-heart';
+          } else {
+            likeBtn.style.color = '#64748b'; // 恢复灰色
+            likeBtn.querySelector('i').className = 'far fa-heart'; // 恢复空心
+          }
           
           try {
+            // 2. 发送请求给 Worker
             const res = await fetch(`${WORKER_URL}likes`, {
               method: 'POST',
-              body: JSON.stringify({ slug })
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                slug: slug, 
+                action: action  // 这里必须传 action，Worker 才能判断是加 1 还是减 1
+              })
             });
+            
+            if (!res.ok) throw new Error('网络请求失败');
+            
             const data = await res.json();
+            
+            // 3. 更新数字，并同步本地存储状态
             likeCountSpan.innerText = data.likes;
-            localStorage.setItem('liked_' + slug, 'true');
-          } catch (e) { console.error("Like error:", e); }
+            if (action === 'like') {
+              localStorage.setItem('liked_' + slug, 'true');
+            } else {
+              localStorage.removeItem('liked_' + slug);
+            }
+          } catch (e) { 
+            console.error("Interaction error:", e);
+            // 如果失败了，建议把样式回滚
+            alert("操作失败，请重试");
+          }
         });
 
         // 4. 评论面板折叠/展开
